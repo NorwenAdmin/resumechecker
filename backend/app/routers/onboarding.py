@@ -3,7 +3,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.chunking import chunk_text
+from app.chunking import chunk_document
 from app.db import get_db
 from app.embeddings import embed_many
 from app.models import ProfileChunk, User
@@ -50,10 +50,18 @@ async def _store_resume_text(db: AsyncSession, user: User, text: str) -> int:
     # Replace, don't append — re-uploading a resume should mirror overwriting resume_raw_text,
     # not pile up duplicate chunks that crowd out real content in top-k retrieval later.
     await db.execute(delete(ProfileChunk).where(ProfileChunk.user_id == user.id, ProfileChunk.source == "resume"))
-    chunks = chunk_text(text)
-    vectors = embed_many(chunks)
-    for content, vector in zip(chunks, vectors):
-        db.add(ProfileChunk(user_id=user.id, source="resume", content=content, embedding=vector))
+    chunks = chunk_document(text, "resume")
+    vectors = embed_many([c["content"] for c in chunks])
+    for chunk, vector in zip(chunks, vectors):
+        db.add(
+            ProfileChunk(
+                user_id=user.id,
+                source="resume",
+                content=chunk["content"],
+                embedding=vector,
+                metadata_={"section": chunk["section"]},
+            )
+        )
     await db.commit()
     return len(chunks)
 

@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS job_chunks (
     id SERIAL PRIMARY KEY,
     job_id INT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
+    -- {section: str, core_requirement: bool} — which section this chunk came from, and whether
+    -- that section is substance (skills/requirements) vs marketing/culture fluff. Lets retrieval
+    -- query only against the substantive sections instead of the whole noisy posting.
+    metadata JSONB NOT NULL DEFAULT '{}',
     embedding VECTOR(384) NOT NULL
 );
 
