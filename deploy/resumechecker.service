@@ -1,0 +1,14 @@
+[Unit]
+Description=Resume Checker FastAPI App
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/resumechecker/backend
+ExecStart=/opt/resumechecker/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

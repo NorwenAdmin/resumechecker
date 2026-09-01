@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script>
+  API.me()
+    .then(() => API.onboardingStatus())
+    .then((s) => {
+      window.location.replace(s.onboarding_completed ? "/tracker.html" : "/onboarding.html");
+    })
+    .catch(() => window.location.replace("/login.html"));
+</script>
+</body>
+</html>

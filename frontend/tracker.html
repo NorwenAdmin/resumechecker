@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tracker — Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">Resume Checker</span>
+  <a href="/onboarding.html">Onboarding</a>
+  <a href="/job-analysis.html">New job</a>
+  <a href="/tracker.html" class="active">Tracker</a>
+</nav>
+<main style="max-width:1200px">
+  <div class="row">
+    <h1 style="margin:0">Tracker</h1>
+    <span class="spacer"></span>
+    <a href="/job-analysis.html"><button>+ New job</button></a>
+  </div>
+  <p class="sub">All your applications. Click a card to open it.</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <div class="board" id="board"></div>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+  mountUserBadge();
+  const COLUMNS = [
+    { key: "progress", label: "Progress" },
+    { key: "sent", label: "Sent" },
+    { key: "interview", label: "Interview" },
+    { key: "offer", label: "Offer" },
+    { key: "rejected", label: "Rejected" },
+  ];
+
+  const QUICK_ACTIONS = {
+    progress: [{ label: "Sent", status: "sent" }],
+    sent: [{ label: "Interview", status: "interview" }, { label: "Rejected", status: "rejected" }],
+    interview: [{ label: "Offer", status: "offer" }, { label: "Rejected", status: "rejected" }],
+    offer: [],
+    rejected: [],
+  };
+
+  const errorBox = document.getElementById("error");
+  function showError(e) {
+    errorBox.textContent = e.message || String(e);
+    errorBox.style.display = "block";
+  }
+
+  async function loadBoard() {
+    try {
+      const jobs = await API.listJobs();
+      renderBoard(jobs);
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  function renderBoard(jobs) {
+    const board = document.getElementById("board");
+    board.innerHTML = "";
+    COLUMNS.forEach((col) => {
+      const colEl = document.createElement("div");
+      colEl.className = "column";
+      const jobsInCol = jobs.filter((j) => j.status === col.key);
+      colEl.innerHTML = `<h3>${col.label} (${jobsInCol.length})</h3>`;
+      jobsInCol.forEach((job) => colEl.appendChild(renderCard(job)));
+      board.appendChild(colEl);
+    });
+  }
+
+  function renderCard(job) {
+    const card = document.createElement("div");
+    card.className = "job-card";
+    card.innerHTML = `
+      <div class="title">${job.title || "Untitled role"}</div>
+      <div class="company">${job.company || ""}</div>
+      <div class="quick-actions"></div>
+    `;
+    card.addEventListener("click", (e) => {
+      if (e.target.tagName === "BUTTON") return;
+      window.location.href = `/generate.html?job=${job.id}`;
+    });
+
+    const actionsEl = card.querySelector(".quick-actions");
+    (QUICK_ACTIONS[job.status] || []).forEach((action) => {
+      const btn = document.createElement("button");
+      btn.className = "secondary";
+      btn.textContent = action.label;
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await API.updateJobStatus(job.id, action.status);
+          loadBoard();
+        } catch (err) {
+          showError(err);
+        }
+      });
+      actionsEl.appendChild(btn);
+    });
+
+    return card;
+  }
+
+  loadBoard();
+</script>
+</body>
+</html>

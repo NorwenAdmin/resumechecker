@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>New job — Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">Resume Checker</span>
+  <a href="/onboarding.html">Onboarding</a>
+  <a href="/job-analysis.html" class="active">New job</a>
+  <a href="/tracker.html">Tracker</a>
+</nav>
+<main>
+  <h1>Analyze a job posting</h1>
+  <p class="sub">Paste the full job posting text. AI checks it against your profile — exact keyword gaps for ATS, and real semantic gaps.</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <div id="create-form" class="card">
+    <div class="row" style="margin-bottom:10px">
+      <div style="flex:1">
+        <label>Job title (optional)</label>
+        <input type="text" id="job-title">
+      </div>
+      <div style="flex:1">
+        <label>Company (optional)</label>
+        <input type="text" id="job-company">
+      </div>
+    </div>
+    <label>Job posting text</label>
+    <textarea id="job-text" rows="10" placeholder="Paste the job description here..."></textarea>
+    <div class="row" style="margin-top:12px">
+      <button id="analyze-btn">Analyze</button>
+      <span id="analyze-status" class="muted"></span>
+    </div>
+  </div>
+
+  <p id="existing-notice" class="muted" style="display:none">
+    Viewing a saved analysis. <a href="/job-analysis.html">Analyze a different job</a>.
+  </p>
+
+  <div id="results" style="display:none">
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0">Verdict</h2>
+        <span class="spacer"></span>
+        <span id="confidence-pill" class="pill"></span>
+      </div>
+      <p id="summary-text"></p>
+    </div>
+
+    <h2>Requirements</h2>
+    <p class="muted">Each requirement from the posting, checked two ways: exact wording (what an ATS scanner matches) and real capability (what you actually have).</p>
+    <div id="gap-list"></div>
+
+    <div class="row" style="margin-top:20px">
+      <a id="generate-link"><button>Generate tailored resume</button></a>
+      <a href="/tracker.html"><button class="secondary">Back to tracker</button></a>
+    </div>
+  </div>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+  mountUserBadge();
+  const errorBox = document.getElementById("error");
+  function showError(e) {
+    errorBox.textContent = e.message || String(e);
+    errorBox.style.display = "block";
+  }
+
+  document.getElementById("analyze-btn").addEventListener("click", async () => {
+    errorBox.style.display = "none";
+    const text = document.getElementById("job-text").value;
+    if (!text.trim()) return showError(new Error("Paste a job posting first"));
+
+    const btn = document.getElementById("analyze-btn");
+    const statusEl = document.getElementById("analyze-status");
+    btn.disabled = true;
+    statusEl.textContent = "Analyzing...";
+
+    try {
+      const title = document.getElementById("job-title").value || null;
+      const company = document.getElementById("job-company").value || null;
+      const analysis = await API.createJob(text, title, company);
+      renderResults(analysis);
+      document.getElementById("results").scrollIntoView({ behavior: "smooth" });
+    } catch (e) {
+      showError(e);
+    } finally {
+      btn.disabled = false;
+      statusEl.textContent = "";
+    }
+  });
+
+  function confidenceClass(score) {
+    if (score >= 70) return "good";
+    if (score >= 40) return "warn";
+    return "bad";
+  }
+
+  function renderResults(analysis) {
+    document.getElementById("results").style.display = "block";
+    const pill = document.getElementById("confidence-pill");
+    pill.textContent = `${analysis.confidence_score}/100`;
+    pill.className = "pill " + confidenceClass(analysis.confidence_score);
+    document.getElementById("summary-text").textContent = analysis.summary;
+
+    const jobId = analysis.job_id;
+    const confirmedSkills = new Set(analysis.confirmed_skills || []);
+
+    const gapList = document.getElementById("gap-list");
+    gapList.innerHTML = "";
+    if (!analysis.items.length) {
+      gapList.innerHTML = '<p class="muted">No requirements extracted.</p>';
+    }
+    analysis.items.forEach((item) => {
+      const el = document.createElement("div");
+      el.className = "card";
+
+      const atsPillClass = item.ats_missing ? "bad" : "good";
+      const atsPillText = item.ats_missing ? "ATS: missing" : "ATS: present";
+
+      const confirmed = confirmedSkills.has(item.requirement);
+      let semPillClass, semPillText, toggleHtml;
+
+      if (!item.real_gap) {
+        semPillClass = "good";
+        semPillText = "Have it";
+        toggleHtml = "";
+      } else if (confirmed) {
+        semPillClass = "good";
+        semPillText = "Confirmed by you";
+        toggleHtml = `<button class="secondary undo-confirm" data-skill="${item.requirement}" style="padding:3px 8px;font-size:12px;margin-top:8px">Actually, I don't</button>`;
+      } else {
+        semPillClass = "bad";
+        semPillText = "Real gap";
+        toggleHtml = `<button class="secondary confirm-skill" data-skill="${item.requirement}" style="padding:3px 8px;font-size:12px;margin-top:8px">I actually have this</button>`;
+      }
+
+      const atsNote = item.ats_missing ? `<p class="muted" style="margin:4px 0 0">ATS: ${item.ats_note}</p>` : "";
+
+      el.innerHTML = `
+        <div class="row"><strong>${item.requirement}</strong><span class="spacer"></span>
+          <span class="pill ${atsPillClass}">${atsPillText}</span>
+          <span class="pill ${semPillClass}">${semPillText}</span>
+        </div>
+        ${atsNote}
+        <p class="muted" style="margin:4px 0 0">${item.semantic_note}</p>
+        ${toggleHtml}`;
+      gapList.appendChild(el);
+    });
+
+    gapList.querySelectorAll(".confirm-skill").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        try {
+          await API.setConfirmedSkill(jobId, btn.dataset.skill, true);
+          analysis.confirmed_skills = [...confirmedSkills.add(btn.dataset.skill)];
+          renderResults(analysis);
+        } catch (e) {
+          showError(e);
+        }
+      })
+    );
+    gapList.querySelectorAll(".undo-confirm").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        try {
+          await API.setConfirmedSkill(jobId, btn.dataset.skill, false);
+          confirmedSkills.delete(btn.dataset.skill);
+          analysis.confirmed_skills = [...confirmedSkills];
+          renderResults(analysis);
+        } catch (e) {
+          showError(e);
+        }
+      })
+    );
+
+    document.getElementById("generate-link").href = `/generate.html?job=${jobId}`;
+  }
+
+  (async () => {
+    const jobId = new URLSearchParams(window.location.search).get("job");
+    if (!jobId) return;
+
+    document.getElementById("create-form").style.display = "none";
+    document.getElementById("existing-notice").style.display = "block";
+    try {
+      const job = await API.getJob(jobId);
+      if (!job.analysis) {
+        return showError(new Error("This job has no analysis yet."));
+      }
+      renderResults({ job_id: job.id, confirmed_skills: job.confirmed_skills, ...job.analysis });
+    } catch (e) {
+      showError(e);
+    }
+  })();
+</script>
+</body>
+</html>

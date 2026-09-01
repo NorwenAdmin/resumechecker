@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Onboarding — Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">Resume Checker</span>
+  <a href="/onboarding.html" class="active">Onboarding</a>
+  <a href="/job-analysis.html">New job</a>
+  <a href="/tracker.html">Tracker</a>
+</nav>
+<main>
+  <h1>Onboarding</h1>
+  <p class="sub">Give it your resume, then answer a few questions. This builds the profile everything else pulls from.</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <section id="step-resume" class="card">
+    <h2 style="margin-top:0">1. Resume</h2>
+    <div class="row" style="margin-bottom:10px">
+      <label style="margin:0"><input type="radio" name="mode" value="file" checked> Upload PDF/DOCX</label>
+      <label style="margin:0"><input type="radio" name="mode" value="paste"> Paste text</label>
+    </div>
+    <div id="file-input">
+      <input type="file" id="resume-file" accept=".pdf,.docx">
+    </div>
+    <div id="paste-input" style="display:none">
+      <textarea id="resume-text" rows="10" placeholder="Paste your resume text here..."></textarea>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="submit-resume" style="display:none">Save resume</button>
+      <span id="resume-status" class="muted"></span>
+    </div>
+    <div id="resume-preview" class="muted" style="margin-top:10px; display:none; white-space:pre-wrap"></div>
+  </section>
+
+  <section id="step-questions" class="card" style="display:none">
+    <h2 style="margin-top:0">2. A few questions</h2>
+    <p class="sub">Short answers are fine. This is what makes the generated resume sound like you, not a template.</p>
+    <div id="questions-list"></div>
+    <div class="row" style="margin-top:16px">
+      <button id="submit-answers">Save answers</button>
+      <span id="answers-status" class="muted"></span>
+    </div>
+  </section>
+
+  <section id="step-done" class="card" style="display:none">
+    <h2 style="margin-top:0">Profile ready</h2>
+    <p>You're set. Go analyze a job posting.</p>
+    <a href="/job-analysis.html"><button>Analyze a job</button></a>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+  mountUserBadge();
+  const errorBox = document.getElementById("error");
+  function showError(e) {
+    errorBox.textContent = e.message || String(e);
+    errorBox.style.display = "block";
+  }
+
+  document.querySelectorAll('input[name=mode]').forEach((r) =>
+    r.addEventListener("change", () => {
+      const isFile = document.querySelector('input[name=mode]:checked').value === "file";
+      document.getElementById("file-input").style.display = isFile ? "block" : "none";
+      document.getElementById("paste-input").style.display = isFile ? "none" : "block";
+      // File mode saves the instant you pick a file, so the button would just redundantly
+      // re-submit the same file. Only paste mode needs an explicit save action.
+      document.getElementById("submit-resume").style.display = isFile ? "none" : "inline-block";
+    })
+  );
+
+  // Pasted text is easy to lose if you navigate away before clicking "Save resume" — keep a
+  // local draft so switching pages/tabs and coming back doesn't wipe out what you typed.
+  const DRAFT_KEY = "resumeDraftText";
+  const resumeTextEl = document.getElementById("resume-text");
+  const savedDraft = localStorage.getItem(DRAFT_KEY);
+  if (savedDraft) resumeTextEl.value = savedDraft;
+  resumeTextEl.addEventListener("input", () => {
+    localStorage.setItem(DRAFT_KEY, resumeTextEl.value);
+  });
+
+  async function saveResume(mode) {
+    errorBox.style.display = "none";
+    const statusEl = document.getElementById("resume-status");
+    let res;
+    if (mode === "file") {
+      const file = document.getElementById("resume-file").files[0];
+      if (!file) throw new Error("Choose a file first");
+      res = await API.uploadResumeFile(file);
+    } else {
+      const text = resumeTextEl.value;
+      if (!text.trim()) throw new Error("Paste some text first");
+      res = await API.uploadResumeText(text);
+    }
+    localStorage.removeItem(DRAFT_KEY);
+    statusEl.textContent = `Saved (${res.chunks_created} chunks).`;
+    showPreview(res.preview);
+    await loadQuestions();
+  }
+
+  function showPreview(text) {
+    const el = document.getElementById("resume-preview");
+    if (!text) {
+      el.style.display = "none";
+      return;
+    }
+    el.textContent = `Saved: “${text}”`;
+    el.style.display = "block";
+  }
+
+  // Selecting a file is the whole action for that mode — save immediately instead of waiting
+  // for a separate click, so picking a file and then switching tabs can't lose it.
+  document.getElementById("resume-file").addEventListener("change", async () => {
+    try {
+      await saveResume("file");
+    } catch (e) {
+      showError(e);
+    }
+  });
+
+  document.getElementById("submit-resume").addEventListener("click", async () => {
+    const mode = document.querySelector('input[name=mode]:checked').value;
+    try {
+      await saveResume(mode);
+    } catch (e) {
+      showError(e);
+    }
+  });
+
+  async function loadQuestions() {
+    const [questions, existingAnswers] = await Promise.all([
+      API.onboardingQuestions(),
+      API.getAnswers().catch(() => []),
+    ]);
+    const answerByQuestion = new Map(existingAnswers.map((a) => [a.question, a.answer]));
+
+    const list = document.getElementById("questions-list");
+    list.innerHTML = "";
+    questions.forEach((q, i) => {
+      const existing = answerByQuestion.get(q);
+      const wrap = document.createElement("div");
+      wrap.style.marginBottom = "14px";
+      const badge = existing ? ` <span class="pill good" style="font-size:11px">Answered</span>` : "";
+      wrap.innerHTML = `<label>${q}${badge}</label><textarea rows="2" data-q="${i}">${existing ? escapeHtml(existing) : ""}</textarea>`;
+      list.appendChild(wrap);
+    });
+    document.getElementById("step-questions").style.display = "block";
+    document.getElementById("step-questions").scrollIntoView({ behavior: "smooth" });
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  document.getElementById("submit-answers").addEventListener("click", async () => {
+    errorBox.style.display = "none";
+    const questions = await API.onboardingQuestions();
+    const areas = document.querySelectorAll("#questions-list textarea");
+    const answers = [];
+    areas.forEach((a) => {
+      const i = Number(a.dataset.q);
+      if (a.value.trim()) answers.push({ question: questions[i], answer: a.value.trim() });
+    });
+    if (!answers.length) return showError(new Error("Answer at least one question"));
+    try {
+      const res = await API.submitAnswers(answers);
+      document.getElementById("answers-status").textContent = `Saved ${res.answers_stored} answers.`;
+      if (res.onboarding_completed) {
+        document.getElementById("step-done").style.display = "block";
+        document.getElementById("step-done").scrollIntoView({ behavior: "smooth" });
+      }
+    } catch (e) {
+      showError(e);
+    }
+  });
+
+  (async () => {
+    try {
+      const status = await API.onboardingStatus();
+      if (status.resume_uploaded) {
+        document.getElementById("resume-status").textContent = "Resume on file — uploading a new one will replace it.";
+        showPreview(status.resume_preview);
+        await loadQuestions();
+      }
+      if (status.onboarding_completed) {
+        document.getElementById("step-done").style.display = "block";
+      }
+    } catch (e) {
+      showError(e);
+    }
+  })();
+</script>
+</body>
+</html>

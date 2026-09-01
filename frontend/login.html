@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Log in — Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<main style="max-width:380px; padding-top:80px">
+  <h1>Resume Checker</h1>
+  <p class="sub">Log in to continue.</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <div class="card">
+    <label>Email</label>
+    <input type="text" id="email" autocomplete="username">
+    <div style="margin-top:12px">
+      <label>Password</label>
+      <input type="password" id="password" autocomplete="current-password">
+    </div>
+    <div class="row" style="margin-top:16px">
+      <button id="login-btn" style="width:100%">Log in</button>
+    </div>
+  </div>
+
+  <p class="muted">No account? <a href="/register.html">Register</a></p>
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+  const errorBox = document.getElementById("error");
+  function showError(e) {
+    errorBox.textContent = e.message || String(e);
+    errorBox.style.display = "block";
+  }
+
+  async function submit() {
+    errorBox.style.display = "none";
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    if (!email || !password) return showError(new Error("Enter email and password"));
+    try {
+      await API.login(email, password);
+      window.location.replace("/");
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  document.getElementById("login-btn").addEventListener("click", submit);
+  document.getElementById("password").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+</script>
+</body>
+</html>

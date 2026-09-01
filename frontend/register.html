@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Register — Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<main style="max-width:380px; padding-top:80px">
+  <h1>Resume Checker</h1>
+  <p class="sub">Create an account.</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <div class="card">
+    <label>Name</label>
+    <input type="text" id="name" autocomplete="name">
+    <div style="margin-top:12px">
+      <label>Email</label>
+      <input type="text" id="email" autocomplete="username">
+    </div>
+    <div style="margin-top:12px">
+      <label>Password</label>
+      <input type="password" id="password" autocomplete="new-password">
+    </div>
+    <div class="row" style="margin-top:16px">
+      <button id="register-btn" style="width:100%">Create account</button>
+    </div>
+  </div>
+
+  <p class="muted">Already have an account? <a href="/login.html">Log in</a></p>
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+  const errorBox = document.getElementById("error");
+  function showError(e) {
+    errorBox.textContent = e.message || String(e);
+    errorBox.style.display = "block";
+  }
+
+  async function submit() {
+    errorBox.style.display = "none";
+    const name = document.getElementById("name").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    if (!name || !email || !password) return showError(new Error("Fill in all fields"));
+    if (password.length < 8) return showError(new Error("Password must be at least 8 characters"));
+    try {
+      await API.register(email, password, name);
+      window.location.replace("/");
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  document.getElementById("register-btn").addEventListener("click", submit);
+  document.getElementById("password").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+</script>
+</body>
+</html>

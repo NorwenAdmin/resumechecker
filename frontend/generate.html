@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Generate — Resume Checker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">Resume Checker</span>
+  <a href="/onboarding.html">Onboarding</a>
+  <a href="/job-analysis.html">New job</a>
+  <a href="/tracker.html">Tracker</a>
+</nav>
+<main>
+  <h1>Generate</h1>
+  <p class="sub" id="job-context">Loading job...</p>
+
+  <div id="error" class="error" style="display:none"></div>
+
+  <div class="card">
+    <div class="row">
+      <button id="gen-resume-btn">Generate resume</button>
+      <button id="gen-letter-btn" class="secondary">Generate cover letter</button>
+      <span id="gen-status" class="muted"></span>
+    </div>
+    <p class="muted" style="margin:10px 0 0"><a id="analysis-link" href="#">← Back to gap analysis</a> — mark any flagged gap as "I have this" before regenerating.</p>
+  </div>
+
+  <div id="resume-section" style="display:none">
+    <div id="match-score-card" class="card" style="display:none">
+      <div class="row">
+        <strong>Resume read-quality score</strong>
+        <span class="spacer"></span>
+        <span id="match-score-pill" class="pill"></span>
+      </div>
+      <p class="muted" style="margin:6px 0 0">Not the same scale as the gap-analysis score — this one judges only the final resume text, cold, the way a real screener would read it. It's meant to be stricter, so a lower number here doesn't mean tailoring made things worse.</p>
+      <p id="match-score-summary" class="muted" style="margin:6px 0 0"></p>
+    </div>
+
+    <h2>Resume — what changed and why</h2>
+    <div id="changes-list"></div>
+
+    <h2>Resume text (edit freely, this is always the final word)</h2>
+    <div class="card">
+      <textarea id="resume-content" rows="18"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button id="save-resume-btn">Save edits</button>
+        <button id="download-pdf-btn" class="secondary">Download PDF</button>
+        <span id="save-status" class="muted"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="letter-section" style="display:none">
+    <h2>Cover letter</h2>
+    <div class="card">
+      <textarea id="letter-content" rows="12"></textarea>
+    </div>
+  </div>
+
+  <div id="promote-section" class="card" style="display:none">
+    <div class="row">
+      <span>Update your base profile with this version?</span>
+      <span class="spacer"></span>
+      <button id="promote-yes" class="secondary">Yes, update profile</button>
+      <button id="promote-no" class="secondary">No, keep as-is</button>
+    </div>
+    <p id="promote-status" class="muted" style="margin-bottom:0"></p>
+  </div>
+
+  <div class="row" style="margin-top:20px">
+    <a href="/tracker.html"><button class="secondary">Back to tracker</button></a>
+  </div>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+  mountUserBadge();
+  const params = new URLSearchParams(window.location.search);
+  const jobId = params.get("job");
+  const errorBox = document.getElementById("error");
+  function showError(e) {
+    errorBox.textContent = e.message || String(e);
+    errorBox.style.display = "block";
+  }
+
+  let currentResumeId = null;
+
+  if (!jobId) {
+    showError(new Error("No job specified. Go to Tracker and pick one, or analyze a new job first."));
+  } else {
+    document.getElementById("analysis-link").href = `/job-analysis.html?job=${jobId}`;
+    loadJob();
+  }
+
+  async function loadJob() {
+    try {
+      const job = await API.getJob(jobId);
+      document.getElementById("job-context").textContent =
+        `${job.title || "Untitled role"}${job.company ? " @ " + job.company : ""} — status: ${job.status}`;
+      if (job.resumes.length) {
+        const latest = job.resumes[0];
+        currentResumeId = latest.id;
+        renderResume(latest);
+      }
+      if (job.cover_letters.length) {
+        renderLetter(job.cover_letters[0]);
+      }
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  document.getElementById("gen-resume-btn").addEventListener("click", async () => {
+    errorBox.style.display = "none";
+    const statusEl = document.getElementById("gen-status");
+    statusEl.textContent = "Generating and scoring resume...";
+    try {
+      const resume = await API.generateResume(jobId);
+      currentResumeId = resume.id;
+      renderResume(resume);
+    } catch (e) {
+      showError(e);
+    } finally {
+      statusEl.textContent = "";
+    }
+  });
+
+  document.getElementById("gen-letter-btn").addEventListener("click", async () => {
+    errorBox.style.display = "none";
+    const statusEl = document.getElementById("gen-status");
+    statusEl.textContent = "Generating cover letter...";
+    try {
+      const letter = await API.generateCoverLetter(jobId);
+      renderLetter(letter);
+    } catch (e) {
+      showError(e);
+    } finally {
+      statusEl.textContent = "";
+    }
+  });
+
+  function confidenceClass(score) {
+    if (score >= 70) return "good";
+    if (score >= 40) return "warn";
+    return "bad";
+  }
+
+  function renderResume(resume) {
+    document.getElementById("resume-section").style.display = "block";
+    document.getElementById("resume-content").value = resume.content;
+
+    const scoreCard = document.getElementById("match-score-card");
+    if (resume.match_score != null) {
+      scoreCard.style.display = "block";
+      const pill = document.getElementById("match-score-pill");
+      pill.textContent = `${resume.match_score}/100`;
+      pill.className = "pill " + confidenceClass(resume.match_score);
+      document.getElementById("match-score-summary").textContent = resume.match_summary || "";
+    } else {
+      scoreCard.style.display = "none";
+    }
+
+    const changesList = document.getElementById("changes-list");
+    changesList.innerHTML = "";
+    (resume.changes || []).forEach((c) => {
+      const el = document.createElement("div");
+      el.className = "change-item";
+      el.innerHTML = `<div><strong>${c.section}</strong></div>` +
+        (c.before ? `<div class="before">${c.before}</div>` : "") +
+        `<div class="after">${c.after}</div>` +
+        `<div class="reason">${c.reason}</div>`;
+      changesList.appendChild(el);
+    });
+
+    document.getElementById("promote-section").style.display = "block";
+  }
+
+  function renderLetter(letter) {
+    document.getElementById("letter-section").style.display = "block";
+    document.getElementById("letter-content").value = letter.content;
+  }
+
+  document.getElementById("save-resume-btn").addEventListener("click", async () => {
+    if (!currentResumeId) return;
+    const statusEl = document.getElementById("save-status");
+    try {
+      const content = document.getElementById("resume-content").value;
+      await API.editResume(jobId, currentResumeId, content);
+      statusEl.textContent = "Saved.";
+    } catch (e) {
+      showError(e);
+    }
+  });
+
+  document.getElementById("download-pdf-btn").addEventListener("click", async () => {
+    if (!currentResumeId) return;
+    const statusEl = document.getElementById("save-status");
+    try {
+      // Save whatever's in the textarea first, so the PDF always matches what's on screen —
+      // including edits made since the last explicit save.
+      const content = document.getElementById("resume-content").value;
+      await API.editResume(jobId, currentResumeId, content);
+      statusEl.textContent = "Saved.";
+      window.location.href = API.resumePdfUrl(jobId, currentResumeId);
+    } catch (e) {
+      showError(e);
+    }
+  });
+
+  document.getElementById("promote-yes").addEventListener("click", async () => {
+    if (!currentResumeId) return;
+    const res = await API.promoteToProfile(jobId, currentResumeId, true);
+    document.getElementById("promote-status").textContent = `Profile updated (${res.chunks_added} chunks added).`;
+  });
+  document.getElementById("promote-no").addEventListener("click", async () => {
+    if (!currentResumeId) return;
+    await API.promoteToProfile(jobId, currentResumeId, false);
+    document.getElementById("promote-status").textContent = "Kept as-is.";
+  });
+</script>
+</body>
+</html>
