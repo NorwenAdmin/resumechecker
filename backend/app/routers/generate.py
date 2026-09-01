@@ -4,11 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis import score_resume_match
 from app.auth import get_current_user
-from app.chunking import chunk_text
+from app.chunking import chunk_document
 from app.db import get_db
 from app.embeddings import embed, embed_many
 from app.generation import generate_cover_letter, generate_resume
-from app.models import CoverLetter, GeneratedResume, Job, ProfileChunk, User
+from app.models import CoverLetter, GeneratedResume, Job, JobChunk, ProfileChunk, User
 from app.pdf_export import DEFAULT_TEMPLATE, generate_resume_pdf
 from app.schemas import CoverLetterOut, PromoteToProfileIn, ResumeEditIn, ResumeOut
 from app.search import top_profile_chunks
@@ -23,6 +23,16 @@ async def _get_owned_job(db: AsyncSession, job_id: int, user_id: int) -> Job:
     return job
 
 
+async def _build_job_query_text(db: AsyncSession, job: Job) -> str:
+    """Prefer the already-sectioned core-requirement chunks from create_job (no duplicate Claude
+    call) over the raw posting text, which usually also carries marketing/culture noise. Falls
+    back to the full raw text for jobs created before section-aware chunking existed."""
+    result = await db.execute(select(JobChunk).where(JobChunk.job_id == job.id))
+    chunks = list(result.scalars().all())
+    core_content = [c.content for c in chunks if c.metadata_.get("core_requirement")]
+    return "\n\n".join(core_content) if core_content else job.raw_text
+
+
 @router.post("/{job_id}/resume", response_model=ResumeOut)
 async def create_resume(
     job_id: int, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
@@ -32,7 +42,8 @@ async def create_resume(
     if not current_user.resume_raw_text:
         raise HTTPException(status_code=400, detail="No profile data yet — complete onboarding first")
 
-    query_embedding = embed(job.raw_text)
+    query_text = await _build_job_query_text(db, job)
+    query_embedding = embed(query_text)
     qa_chunks = await top_profile_chunks(db, current_user.id, query_embedding, k=6, source="qa")
 
     result = generate_resume(current_user, job.raw_text, current_user.resume_raw_text, qa_chunks, job.confirmed_skills)
@@ -77,7 +88,8 @@ async def create_cover_letter(
     latest_resume = latest_resume_result.scalar_one_or_none()
     resume_text = latest_resume.content if latest_resume else ""
 
-    query_embedding = embed(job.raw_text)
+    query_text = await _build_job_query_text(db, job)
+    query_embedding = embed(query_text)
     qa_chunks = await top_profile_chunks(db, current_user.id, query_embedding, k=6, source="qa")
 
     content = generate_cover_letter(current_user, job.raw_text, resume_text, qa_chunks, job.confirmed_skills)
@@ -162,16 +174,16 @@ async def promote_to_profile(
     await db.execute(
         delete(ProfileChunk).where(ProfileChunk.user_id == current_user.id, ProfileChunk.source == "resume")
     )
-    chunks = chunk_text(resume.content)
-    vectors = embed_many(chunks)
-    for content, vector in zip(chunks, vectors):
+    chunks = chunk_document(resume.content, "resume")
+    vectors = embed_many([c["content"] for c in chunks])
+    for chunk, vector in zip(chunks, vectors):
         db.add(
             ProfileChunk(
                 user_id=current_user.id,
                 source="resume",
-                content=content,
+                content=chunk["content"],
                 embedding=vector,
-                metadata_={"promoted_from_job_id": job_id},
+                metadata_={"promoted_from_job_id": job_id, "section": chunk["section"]},
             )
         )
     await db.commit()

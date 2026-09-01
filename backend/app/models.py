@@ -66,6 +66,7 @@ class JobChunk(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
     content: Mapped[str] = mapped_column(Text)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM))
 
     job: Mapped[Job] = relationship(back_populates="chunks")

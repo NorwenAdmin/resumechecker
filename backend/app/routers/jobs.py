@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis import run_ats_semantic_analysis
 from app.auth import get_current_user
-from app.chunking import chunk_text
+from app.chunking import chunk_document
 from app.db import get_db
 from app.embeddings import embed, embed_many
 from app.models import Analysis, CoverLetter, GeneratedResume, Job, JobChunk, User
@@ -35,12 +35,24 @@ async def create_job(
     db.add(job)
     await db.flush()
 
-    chunks = chunk_text(text)
-    vectors = embed_many(chunks)
-    for content, vector in zip(chunks, vectors):
-        db.add(JobChunk(job_id=job.id, content=content, embedding=vector))
+    sectioned_chunks = chunk_document(text, "job posting")
+    vectors = embed_many([c["content"] for c in sectioned_chunks])
+    for chunk, vector in zip(sectioned_chunks, vectors):
+        db.add(
+            JobChunk(
+                job_id=job.id,
+                content=chunk["content"],
+                embedding=vector,
+                metadata_={"section": chunk["section"], "core_requirement": chunk["core_requirement"]},
+            )
+        )
 
-    query_embedding = embed(text)
+    # Query only with the substantive sections (skills/requirements/responsibilities) — not the
+    # whole posting, which usually also carries marketing/culture/benefits text ("free lunch",
+    # "100-inch TV") that dilutes the query vector away from what actually needs matching.
+    core_content = [c["content"] for c in sectioned_chunks if c["core_requirement"]]
+    query_text = "\n\n".join(core_content) if core_content else text
+    query_embedding = embed(query_text)
     relevant_chunks = await top_profile_chunks(db, current_user.id, query_embedding, k=8)
     if not relevant_chunks:
         raise HTTPException(status_code=400, detail="No profile data yet — complete onboarding first")
