@@ -42,7 +42,9 @@ async def get_status(current_user: User = Depends(get_current_user), db: AsyncSe
 
 
 async def _store_resume_text(db: AsyncSession, user: User, text: str) -> int:
-    text = text.strip()
+    # PDF extraction (pypdf) can emit NUL/control bytes for PDFs with broken font/glyph
+    # tables; Postgres text columns reject \x00 outright (CharacterNotInRepertoireError).
+    text = "".join(c for c in text if c == "\n" or c == "\t" or c >= " ").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Resume text is empty")
 
